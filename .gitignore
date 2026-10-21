@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.commit-notes.json
+*.env
+*.env.*
+coverage/
+.DS_Store
+Thumbs.db
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

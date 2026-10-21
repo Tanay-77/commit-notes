@@ -1,0 +1,24 @@
+{
+  "name": "commit-notes",
+  "version": "0.1.0",
+  "description": "CLI tool that turns Git commits into structured Markdown study notes",
+  "type": "module",
+  "bin": {
+    "commit-notes": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
