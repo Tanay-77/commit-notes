@@ -9,6 +9,7 @@ import { createLLMProvider } from "./llm.js";
 import { analyzeCommit } from "./analyze.js";
 import { getKnownConcepts, saveNotes } from "./notes.js";
 import { installHook, uninstallHook } from "./hook.js";
+import { runExplainSession } from "./explain.js";
 
 const program = new Command();
 
@@ -125,8 +126,13 @@ program
   .command("explain")
   .description("Start an explain-back session for a commit")
   .argument("[sha]", "Commit SHA or ref to explain", "HEAD")
-  .action((sha: string) => {
-    console.log(`[stub] Starting explain-back session for commit: ${sha}`);
+  .action(async (sha: string) => {
+    try {
+      await runExplainSession(sha);
+    } catch (err: unknown) {
+      console.error("\nExplain session failed:", err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
   });
 
 program
