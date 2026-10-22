@@ -45,6 +45,7 @@ program
         model: defaultModel,
         ignore: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
         maxDiffChars: 24000,
+        fuzzyThreshold: 0.75,
       };
 
       await saveConfig(config);

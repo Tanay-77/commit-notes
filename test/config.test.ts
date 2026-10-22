@@ -69,6 +69,7 @@ describe("saveConfig & loadConfig", () => {
       model: "gemini-1.5-pro",
       ignore: ["package-lock.json"],
       maxDiffChars: 30000,
+      fuzzyThreshold: 0.75,
     };
 
     await saveConfig(config, tempDir);

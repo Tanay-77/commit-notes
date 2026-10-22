@@ -10,6 +10,7 @@ export const ConfigSchema = z.object({
   model: z.string().min(1, "model is required"),
   ignore: z.array(z.string()).default([]),
   maxDiffChars: z.number().int().positive().default(24000),
+  fuzzyThreshold: z.number().min(0).max(1).default(0.75),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
