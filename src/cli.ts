@@ -2,7 +2,13 @@
 import { Command } from "commander";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { saveConfig, getConfigPath, type Config } from "./config.js";
+import { saveConfig, loadConfig, getConfigPath, type Config } from "./config.js";
+import { getCommit } from "./git.js";
+import { filterFiles, truncate } from "./filter.js";
+import { createLLMProvider } from "./llm.js";
+import { analyzeCommit } from "./analyze.js";
+import { getKnownConcepts, saveNotes } from "./notes.js";
+import { installHook, uninstallHook } from "./hook.js";
 
 const program = new Command();
 
@@ -62,8 +68,50 @@ program
   .command("run")
   .description("Generate study notes for a specific commit (default: HEAD)")
   .argument("[sha]", "Commit SHA or ref to analyze", "HEAD")
-  .action((sha: string) => {
-    console.log(`[stub] Generating study notes for commit: ${sha}`);
+  .action(async (sha: string) => {
+    try {
+      const config = await loadConfig();
+      console.log(`Fetching commit "${sha}"...`);
+      const commit = await getCommit(sha);
+      console.log(`Found commit ${commit.sha.slice(0, 7)} by ${commit.author}: "${commit.message.split("\n")[0]}"`);
+
+      const filtered = filterFiles(commit.files, config.ignore);
+      if (filtered.length === 0) {
+        console.log("No relevant files to analyze in this commit after filtering.");
+        return;
+      }
+
+      const { files: truncatedFiles, truncated } = truncate(filtered, config.maxDiffChars);
+      if (truncated) {
+        console.log("Note: Diff exceeded budget and was truncated according to relevance.");
+      }
+
+      const knownConcepts = await getKnownConcepts(config.vaultPath);
+      const provider = createLLMProvider(config.provider, config.model);
+
+      console.log(`Analyzing diff with ${config.provider} (${config.model})...`);
+      const analysis = await analyzeCommit(
+        { ...commit, files: truncatedFiles },
+        knownConcepts,
+        provider
+      );
+
+      console.log(`\nCommit Summary:\n${analysis.summary}\n`);
+
+      const result = await saveNotes(config.vaultPath, commit, analysis, {
+        fuzzyThreshold: config.fuzzyThreshold,
+      });
+
+      console.log(`Success! Notes written to "${config.vaultPath}":`);
+      console.log(`- Commit note: ${result.commitNotePath}`);
+      console.log(`- Concepts recorded (${result.conceptsWritten.length}):`);
+      for (const name of result.conceptsWritten) {
+        console.log(`  * ${name}`);
+      }
+    } catch (err: unknown) {
+      console.error("\nRun failed:", err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
   });
 
 program
@@ -81,4 +129,43 @@ program
     console.log(`[stub] Starting explain-back session for commit: ${sha}`);
   });
 
+program
+  .command("install-hook")
+  .description("Install background post-commit hook in .git/hooks/post-commit")
+  .action(async () => {
+    try {
+      const result = await installHook();
+      if (result.action === "already-installed") {
+        console.log(`commit-notes hook is already installed in "${result.hookPath}".`);
+      } else if (result.action === "appended") {
+        console.log(`commit-notes hook safely appended to existing "${result.hookPath}".`);
+      } else {
+        console.log(`commit-notes hook successfully created at "${result.hookPath}".`);
+      }
+    } catch (err: unknown) {
+      console.error("Failed to install hook:", err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("uninstall-hook")
+  .description("Remove commit-notes from .git/hooks/post-commit")
+  .action(async () => {
+    try {
+      const result = await uninstallHook();
+      if (result.action === "not-installed") {
+        console.log("No commit-notes hook was found to uninstall.");
+      } else if (result.action === "removed") {
+        console.log(`commit-notes post-commit hook removed from "${result.hookPath}".`);
+      } else {
+        console.log(`commit-notes hook removed; preserved remaining hooks in "${result.hookPath}".`);
+      }
+    } catch (err: unknown) {
+      console.error("Failed to uninstall hook:", err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
+  });
+
 program.parse(process.argv);
+
