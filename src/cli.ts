@@ -5,12 +5,14 @@ import { stdin as input, stdout as output } from "node:process";
 import { saveConfig, loadConfig, getConfigPath, type Config } from "./config.js";
 import { getCommit } from "./git.js";
 import { filterFiles, truncate } from "./filter.js";
-import { createLLMProvider } from "./llm.js";
+import { createLLMProvider, loadEnv } from "./llm.js";
 import { analyzeCommit } from "./analyze.js";
 import { getKnownConcepts, saveNotes } from "./notes.js";
 import { installHook, uninstallHook } from "./hook.js";
 import { runExplainSession } from "./explain.js";
 import { runQuizSession } from "./quiz.js";
+
+loadEnv();
 
 const program = new Command();
 
@@ -40,17 +42,20 @@ program
         provider = providerInput;
       }
 
-      let defaultModel = "gemini-1.5-pro";
+      let defaultModel = "gemini-2.0-flash";
       if (provider === "anthropic") {
         defaultModel = "claude-3-5-sonnet-latest";
       } else if (provider === "openai") {
         defaultModel = "gpt-4o";
       }
 
+      const rawModel = await rl.question(`Choose model name [${defaultModel}]: `);
+      const model = rawModel.trim() || defaultModel;
+
       const config: Config = {
         vaultPath,
         provider,
-        model: defaultModel,
+        model,
         ignore: ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"],
         maxDiffChars: 24000,
         fuzzyThreshold: 0.75,
@@ -70,9 +75,12 @@ program
   .command("run")
   .description("Generate study notes for a specific commit (default: HEAD)")
   .argument("[sha]", "Commit SHA or ref to analyze", "HEAD")
-  .action(async (sha: string) => {
+  .option("-m, --model <model>", "Override LLM model name")
+  .action(async (sha: string, cmdOptions: { model?: string }) => {
     try {
       const config = await loadConfig();
+      const modelToUse = cmdOptions.model || config.model;
+
       console.log(`Fetching commit "${sha}"...`);
       const commit = await getCommit(sha);
       console.log(`Found commit ${commit.sha.slice(0, 7)} by ${commit.author}: "${commit.message.split("\n")[0]}"`);
@@ -89,9 +97,9 @@ program
       }
 
       const knownConcepts = await getKnownConcepts(config.vaultPath);
-      const provider = createLLMProvider(config.provider, config.model);
+      const provider = createLLMProvider(config.provider, modelToUse);
 
-      console.log(`Analyzing diff with ${config.provider} (${config.model})...`);
+      console.log(`Analyzing diff with ${config.provider} (${modelToUse})...`);
       const analysis = await analyzeCommit(
         { ...commit, files: truncatedFiles },
         knownConcepts,
@@ -119,9 +127,14 @@ program
 program
   .command("quiz")
   .description("Start an interactive review / quiz session from generated notes")
-  .action(async () => {
+  .option("-m, --model <model>", "Override LLM model name")
+  .action(async (cmdOptions: { model?: string }) => {
     try {
-      await runQuizSession();
+      const config = await loadConfig();
+      if (cmdOptions.model) {
+        config.model = cmdOptions.model;
+      }
+      await runQuizSession(process.cwd(), { config });
     } catch (err: unknown) {
       console.error("\nQuiz session failed:", err instanceof Error ? err.message : err);
       process.exitCode = 1;
@@ -132,9 +145,14 @@ program
   .command("explain")
   .description("Start an explain-back session for a commit")
   .argument("[sha]", "Commit SHA or ref to explain", "HEAD")
-  .action(async (sha: string) => {
+  .option("-m, --model <model>", "Override LLM model name")
+  .action(async (sha: string, cmdOptions: { model?: string }) => {
     try {
-      await runExplainSession(sha);
+      const config = await loadConfig();
+      if (cmdOptions.model) {
+        config.model = cmdOptions.model;
+      }
+      await runExplainSession(sha, process.cwd(), { config });
     } catch (err: unknown) {
       console.error("\nExplain session failed:", err instanceof Error ? err.message : err);
       process.exitCode = 1;

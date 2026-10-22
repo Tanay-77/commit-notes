@@ -1,3 +1,45 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+export function loadEnv(root: string = process.cwd()): void {
+  const envPath = path.join(root, ".env");
+  try {
+    const nodeProcess = process as unknown as { loadEnvFile?: (path?: string) => void };
+    if (typeof nodeProcess.loadEnvFile === "function") {
+      nodeProcess.loadEnvFile(envPath);
+      return;
+    }
+  } catch {
+    // proceed to fallback
+  }
+
+  try {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf-8");
+      for (const line of content.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx > 0) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if (
+            (val.startsWith('"') && val.endsWith('"')) ||
+            (val.startsWith("'") && val.endsWith("'"))
+          ) {
+            val = val.slice(1, -1);
+          }
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export interface LLMProvider {
   complete(system: string, user: string): Promise<string>;
 }
@@ -16,6 +58,9 @@ export class GeminiProvider implements LLMProvider {
   private readonly baseDelayMs: number;
 
   constructor(options: GeminiProviderOptions = {}) {
+    if (!options.apiKey) {
+      loadEnv();
+    }
     const key = options.apiKey ?? process.env.GEMINI_API_KEY;
     if (!key || key.trim() === "") {
       throw new Error(
@@ -23,7 +68,7 @@ export class GeminiProvider implements LLMProvider {
       );
     }
     this.apiKey = key.trim();
-    this.model = options.model ?? "gemini-1.5-pro";
+    this.model = options.model ?? "gemini-3.5-flash-lite";
     this.maxRetries = options.maxRetries ?? 3;
     this.baseDelayMs = options.baseDelayMs ?? 1000;
   }
