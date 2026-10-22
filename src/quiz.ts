@@ -1,0 +1,280 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+import { z } from "zod";
+import { loadConfig, type Config } from "./config.js";
+import { createLLMProvider, type LLMProvider } from "./llm.js";
+import { stripCodeFences } from "./analyze.js";
+import { slugify } from "./notes.js";
+import { trackUsage } from "./explain.js";
+import {
+  calculateSM2,
+  createInitialSchedule,
+  formatDate,
+  isDue,
+  type ScheduleItem,
+} from "./schedule.js";
+import { QUIZ_GRADE_SYSTEM_PROMPT } from "./prompts/quiz.js";
+
+export const QuizGradeSchema = z.object({
+  score: z.number().int().min(0).max(5),
+  feedback: z.string().min(1, "feedback is required"),
+  idealAnswer: z.string().min(1, "idealAnswer is required"),
+});
+
+export type QuizGradeResult = z.infer<typeof QuizGradeSchema>;
+
+export interface ProgressCard extends ScheduleItem {
+  concept: string;
+  scores?: number[];
+  dates?: string[];
+}
+
+export interface ConceptDetails {
+  name: string;
+  explanation: string;
+  question: string;
+}
+
+export async function parseConceptFile(filePath: string): Promise<ConceptDetails> {
+  const content = await fs.readFile(filePath, "utf-8");
+
+  // Extract Title
+  const titleMatch = content.match(/^#\s+(.+)$/m);
+  const name = titleMatch ? titleMatch[1].trim() : path.basename(filePath, ".md");
+
+  // Extract Explanation
+  let explanation = "";
+  const expMatch = content.split("## Explanation")[1];
+  if (expMatch) {
+    const expText = expMatch.split("##")[0];
+    explanation = expText.trim();
+  }
+
+  // Extract Interview Question
+  let question = `Explain the core concepts and trade-offs of ${name}.`;
+  const qMatch = content.split("## Interview questions")[1];
+  if (qMatch) {
+    const qLines = qMatch
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("- "));
+    if (qLines.length > 0 && qLines[0]) {
+      question = qLines[0].substring(2).trim();
+    }
+  }
+
+  return { name, explanation, question };
+}
+
+export async function loadProgressCards(vaultPath: string): Promise<ProgressCard[]> {
+  const progressPath = path.join(vaultPath, "progress.json");
+  let list: ProgressCard[] = [];
+
+  try {
+    const raw = await fs.readFile(progressPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      list = parsed.map((item) => {
+        // Upgrade legacy progress records if missing SM-2 fields
+        if (typeof item.interval !== "number" || typeof item.easeFactor !== "number") {
+          const init = createInitialSchedule();
+          return {
+            concept: item.concept || "Unknown",
+            scores: item.scores || [],
+            dates: item.dates || [],
+            ...init,
+          };
+        }
+        return item as ProgressCard;
+      });
+    }
+  } catch {
+    list = [];
+  }
+
+  // Synchronize with concepts on disk in vault/concepts/
+  const conceptsDir = path.join(vaultPath, "concepts");
+  try {
+    const files = await fs.readdir(conceptsDir);
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
+      const details = await parseConceptFile(path.join(conceptsDir, file)).catch(() => null);
+      if (!details) continue;
+
+      const exists = list.some(
+        (c) => c.concept.toLowerCase() === details.name.toLowerCase()
+      );
+      if (!exists) {
+        list.push({
+          concept: details.name,
+          scores: [],
+          dates: [],
+          ...createInitialSchedule(),
+        });
+      }
+    }
+  } catch {
+    // Concepts dir may not exist yet
+  }
+
+  return list;
+}
+
+export async function saveProgressCards(
+  vaultPath: string,
+  cards: ProgressCard[]
+): Promise<void> {
+  const progressPath = path.join(vaultPath, "progress.json");
+  await fs.mkdir(vaultPath, { recursive: true });
+  await fs.writeFile(progressPath, JSON.stringify(cards, null, 2) + "\n", "utf-8");
+}
+
+export async function gradeQuizAnswer(
+  conceptName: string,
+  explanation: string,
+  question: string,
+  userAnswer: string,
+  provider: LLMProvider
+): Promise<QuizGradeResult> {
+  const userPrompt = [
+    `Concept: ${conceptName}`,
+    `Reference Context: ${explanation || "(None provided)"}`,
+    `Question: ${question}`,
+    `Candidate Answer: ${userAnswer}`,
+  ].join("\n");
+
+  let raw = await provider.complete(QUIZ_GRADE_SYSTEM_PROMPT, userPrompt);
+  try {
+    const cleaned = stripCodeFences(raw);
+    return QuizGradeSchema.parse(JSON.parse(cleaned));
+  } catch (firstErr: unknown) {
+    const errorMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+    const retryPrompt = [
+      userPrompt,
+      "",
+      "CRITICAL: Output was invalid. Output ONLY valid JSON adhering to schema.",
+      `Validation Error: ${errorMsg}`,
+    ].join("\n");
+
+    raw = await provider.complete(QUIZ_GRADE_SYSTEM_PROMPT, retryPrompt);
+    const cleaned = stripCodeFences(raw);
+    return QuizGradeSchema.parse(JSON.parse(cleaned));
+  }
+}
+
+export interface QuizSessionOptions {
+  config?: Config;
+  provider?: LLMProvider;
+  readAnswer?: (prompt: string) => Promise<string>;
+}
+
+export async function runQuizSession(
+  repoRoot: string = process.cwd(),
+  options: QuizSessionOptions = {}
+): Promise<void> {
+  const config = options.config ?? (await loadConfig(repoRoot));
+  const cards = await loadProgressCards(config.vaultPath);
+
+  if (cards.length === 0) {
+    console.log("No concepts found in your vault. Run 'commit-notes run' first to generate study notes.");
+    return;
+  }
+
+  const todayStr = formatDate();
+  const dueCards = cards.filter((c) => isDue(c, todayStr));
+
+  if (dueCards.length === 0) {
+    const futureCards = [...cards]
+      .filter((c) => c.dueDate > todayStr)
+      .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+
+    if (futureCards.length > 0) {
+      console.log(`\nGreat job! No concepts are due for review today.`);
+      console.log(`Next review is scheduled on ${futureCards[0].dueDate} (${futureCards[0].concept}).`);
+    } else {
+      console.log("\nNo concepts are currently scheduled for review.");
+    }
+    return;
+  }
+
+  // Pick up to 10 concepts due today
+  const sessionQueue = dueCards.slice(0, 10);
+  console.log(`\n=== Review Session: ${sessionQueue.length} concept(s) due today ===\n`);
+
+  const provider = options.provider ?? createLLMProvider(config.provider, config.model);
+  const readAnswerFn =
+    options.readAnswer ??
+    (async (p: string) => {
+      const rl = readline.createInterface({ input, output });
+      try {
+        return (await rl.question(p)).trim();
+      } finally {
+        rl.close();
+      }
+    });
+
+  let reviewedCount = 0;
+
+  for (let i = 0; i < sessionQueue.length; i++) {
+    const card = sessionQueue[i];
+    const slug = slugify(card.concept);
+    const conceptFilePath = path.join(config.vaultPath, "concepts", `${slug}.md`);
+
+    let details: ConceptDetails = {
+      name: card.concept,
+      explanation: "",
+      question: `Explain the core concepts and trade-offs of ${card.concept}.`,
+    };
+
+    try {
+      details = await parseConceptFile(conceptFilePath);
+    } catch {
+      // Use fallback details
+    }
+
+    console.log(`[Card ${i + 1}/${sessionQueue.length}] Concept: ${details.name}`);
+    console.log(`Question: ${details.question}\n`);
+
+    const answer = await readAnswerFn("Your Answer: ");
+    if (!answer) {
+      console.log("Skipping card (empty answer).\n");
+      continue;
+    }
+
+    console.log("Grading answer...");
+    const grade = await gradeQuizAnswer(
+      details.name,
+      details.explanation,
+      details.question,
+      answer,
+      provider
+    );
+
+    console.log(`\nScore: ${grade.score}/5`);
+    console.log(`Feedback: ${grade.feedback}`);
+    console.log(`Ideal Answer: ${grade.idealAnswer}\n`);
+
+    // Update schedule with SM-2
+    const updatedSchedule = calculateSM2(card, grade.score);
+    card.interval = updatedSchedule.interval;
+    card.easeFactor = updatedSchedule.easeFactor;
+    card.repetitions = updatedSchedule.repetitions;
+    card.dueDate = updatedSchedule.dueDate;
+
+    if (!card.scores) card.scores = [];
+    if (!card.dates) card.dates = [];
+    card.scores.push(grade.score);
+    card.dates.push(todayStr);
+
+    console.log(`Next review in ${card.interval} day(s) on ${card.dueDate}.\n------------------------------------------\n`);
+    reviewedCount++;
+  }
+
+  // Save updated progress
+  await saveProgressCards(config.vaultPath, cards);
+  await trackUsage(config.vaultPath, "quiz");
+
+  console.log(`Session complete! Reviewed ${reviewedCount} concept(s). Progress saved to progress.json.`);
+}

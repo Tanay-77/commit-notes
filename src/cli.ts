@@ -10,6 +10,7 @@ import { analyzeCommit } from "./analyze.js";
 import { getKnownConcepts, saveNotes } from "./notes.js";
 import { installHook, uninstallHook } from "./hook.js";
 import { runExplainSession } from "./explain.js";
+import { runQuizSession } from "./quiz.js";
 
 const program = new Command();
 
@@ -118,8 +119,13 @@ program
 program
   .command("quiz")
   .description("Start an interactive review / quiz session from generated notes")
-  .action(() => {
-    console.log("[stub] Starting interactive review session...");
+  .action(async () => {
+    try {
+      await runQuizSession();
+    } catch (err: unknown) {
+      console.error("\nQuiz session failed:", err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    }
   });
 
 program
