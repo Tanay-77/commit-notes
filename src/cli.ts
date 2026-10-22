@@ -25,11 +25,19 @@ program
         return;
       }
 
-      const rawProvider = await rl.question("Choose provider (anthropic | gemini) [anthropic]: ");
+      const rawProvider = await rl.question("Choose provider (anthropic | gemini | openai) [gemini]: ");
       const providerInput = rawProvider.trim().toLowerCase();
-      const provider: "anthropic" | "gemini" = providerInput === "gemini" ? "gemini" : "anthropic";
+      let provider: "anthropic" | "gemini" | "openai" = "gemini";
+      if (providerInput === "anthropic" || providerInput === "openai") {
+        provider = providerInput;
+      }
 
-      const defaultModel = provider === "anthropic" ? "claude-3-5-sonnet-latest" : "gemini-1.5-pro";
+      let defaultModel = "gemini-1.5-pro";
+      if (provider === "anthropic") {
+        defaultModel = "claude-3-5-sonnet-latest";
+      } else if (provider === "openai") {
+        defaultModel = "gpt-4o";
+      }
 
       const config: Config = {
         vaultPath,

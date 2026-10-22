@@ -6,7 +6,7 @@ export const CONFIG_FILE_NAME = ".commit-notes.json";
 
 export const ConfigSchema = z.object({
   vaultPath: z.string().min(1, "vaultPath is required"),
-  provider: z.enum(["anthropic", "gemini"]),
+  provider: z.enum(["anthropic", "gemini", "openai"]),
   model: z.string().min(1, "model is required"),
   ignore: z.array(z.string()).default([]),
   maxDiffChars: z.number().int().positive().default(24000),

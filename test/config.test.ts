@@ -19,12 +19,21 @@ describe("ConfigSchema", () => {
     expect(parsed.maxDiffChars).toBe(24000);
   });
 
+  it("accepts openai provider", () => {
+    const parsed = ConfigSchema.parse({
+      vaultPath: "/notes",
+      provider: "openai",
+      model: "gpt-4o",
+    });
+    expect(parsed.provider).toBe("openai");
+  });
+
   it("rejects invalid provider", () => {
     expect(() =>
       ConfigSchema.parse({
         vaultPath: "/notes",
-        provider: "openai",
-        model: "gpt-4",
+        provider: "unsupported-provider",
+        model: "model-x",
       })
     ).toThrow();
   });
