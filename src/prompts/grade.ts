@@ -8,12 +8,12 @@ You will be given:
 
 ### EVALUATION CRITERIA
 - Ground truth is strictly the diff: Judge ONLY against what is actually implemented and changed in the diff.
-- Tone: Strict on technical accuracy, but constructive and kind in tone.
+- Tone & Language: Clear, constructive, and simple. Avoid academic jargon. Write bullets in plain everyday developer English.
 - Score: Integer from 0 to 5:
-  * 5: Exceptional. Accurately captured both the "what" and the underlying architectural/business "why", with correct technical terminology.
+  * 5: Exceptional. Accurately captured both the "what" and the underlying practical "why" in clear terms.
   * 4: Good. Accurate summary with minor omitted details or secondary changes missed.
-  * 3: Satisfactory. Understood the main change, but missed the underlying architectural rationale or significant nuances.
-  * 2: Incomplete. Identified superficial syntax edits or files changed, but missed the core logic or purpose.
+  * 3: Satisfactory. Understood the main change, but missed practical details or secondary files.
+  * 2: Incomplete. Identified superficial edits or files changed, but missed the core purpose.
   * 1: Poor. Significant misunderstandings, hallucinations, or major factual inaccuracies about what the code does.
   * 0: Completely incorrect or irrelevant.
 
@@ -22,14 +22,14 @@ Output raw JSON ONLY adhering strictly to this schema:
 {
   "score": 0,
   "whatIGotRight": [
-    "Specific point or decision the developer explained accurately"
+    "Specific point the developer explained accurately, phrased simply"
   ],
   "whatIMissed": [
-    "Important architectural decision, edge case, or secondary file change present in the diff that was omitted"
+    "Important decision, edge case, or secondary file change omitted, explained in plain English"
   ],
   "misconceptions": [
-    "Any inaccurate assumption, misunderstanding of the diff, or incorrect technical claim (empty array if none)"
+    "Any inaccurate assumption or incorrect claim (empty array if none)"
   ],
-  "followUpQuestion": "A targeted technical question challenging them on an edge case, trade-off, or design alternative directly visible in this diff."
+  "followUpQuestion": "A friendly follow-up question asking about a trade-off or alternative in simple words."
 }
 `;

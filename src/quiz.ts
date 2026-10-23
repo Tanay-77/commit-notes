@@ -36,6 +36,7 @@ export interface ConceptDetails {
   name: string;
   explanation: string;
   question: string;
+  idealAnswer?: string;
   exampleRef?: string;
 }
 
@@ -102,16 +103,24 @@ export async function parseConceptFile(filePath: string): Promise<ConceptDetails
     explanation = expText.trim();
   }
 
-  // Extract Interview Question
+  // Extract Interview Question and Answer
   let question = `Explain the core concepts and trade-offs of ${name}.`;
+  let idealAnswer: string | undefined;
+
   const qMatch = content.split("## Interview questions")[1];
   if (qMatch) {
-    const qLines = qMatch
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.startsWith("- "));
-    if (qLines.length > 0 && qLines[0]) {
-      question = qLines[0].substring(2).trim();
+    const qSection = qMatch.split("##")[0].trim();
+
+    // Check for Answer: or **Answer:**
+    const ansMatch = qSection.match(/(?:\*\*Answer:\*\*|Answer:)\s*([\s\S]+?)(?=\n-|\n##|$)/i);
+    if (ansMatch && ansMatch[1]) {
+      idealAnswer = ansMatch[1].trim();
+    }
+
+    // Check for - **Q:** or - Question
+    const qLineMatch = qSection.match(/(?:- \*\*Q:\*\*|- )\s*([^\n]+)/);
+    if (qLineMatch && qLineMatch[1]) {
+      question = qLineMatch[1].trim();
     }
   }
 
@@ -122,7 +131,7 @@ export async function parseConceptFile(filePath: string): Promise<ConceptDetails
     exampleRef = exMatch[1];
   }
 
-  return { name, explanation, question, exampleRef };
+  return { name, explanation, question, idealAnswer, exampleRef };
 }
 
 export async function loadProgressCards(vaultPath: string): Promise<ProgressCard[]> {
@@ -283,8 +292,11 @@ export async function runQuizSession(
         // Fallback
       }
 
-      // Generate a model answer
-      const idealAnswer = details.explanation || `Core concept introduced in code changes for ${card.concept}.`;
+      // Generate a model answer (prioritize specific interview answer if available, else explanation)
+      const idealAnswer =
+        details.idealAnswer ||
+        details.explanation ||
+        `Core concept introduced in code changes for ${card.concept}.`;
 
       questions.push({
         concept: details.name,

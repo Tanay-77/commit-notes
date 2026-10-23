@@ -97,6 +97,32 @@ Spreads out retry intervals to avoid overwhelming the server.
     expect(details.explanation).toBe("Spreads out retry intervals to avoid overwhelming the server.");
     expect(details.question).toBe("How does exponential backoff prevent the thundering herd problem?");
   });
+
+  it("extracts interview question and answer when QA format is present", async () => {
+    const filePath = path.join(tempDir, "zod-schema.md");
+    const content = `---
+tags: [commit-notes, basic]
+created: 2026-10-22
+---
+# Zod Schema Validation
+
+## Explanation
+Checks data shape before using it.
+
+## Examples
+- [[commit-1]] : file.ts
+
+## Interview questions
+- **Q:** What is Zod and what happens when validation fails?
+  **Answer:** Zod checks if data matches a schema. If invalid, it throws an error or returns details so the app doesn't crash.
+`;
+    await fs.writeFile(filePath, content, "utf-8");
+
+    const details = await parseConceptFile(filePath);
+    expect(details.name).toBe("Zod Schema Validation");
+    expect(details.question).toBe("What is Zod and what happens when validation fails?");
+    expect(details.idealAnswer).toBe("Zod checks if data matches a schema. If invalid, it throws an error or returns details so the app doesn't crash.");
+  });
 });
 
 describe("loadProgressCards and sync", () => {

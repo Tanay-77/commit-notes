@@ -282,9 +282,14 @@ export function createConceptMarkdown(
 
   const exampleBlock = formatExampleBlock(commitFileBase, concept);
   const explanation = concept.explanation ?? "Concept introduced in commit.";
-  const interviewQuestion = concept.interviewQuestion
-    ? `- ${concept.interviewQuestion}`
-    : "- Explain how this concept applies in this context.";
+  let interviewQuestion = "- Explain how this concept applies in this context.";
+  if (concept.interviewQuestion) {
+    if (concept.interviewAnswer) {
+      interviewQuestion = `- **Q:** ${concept.interviewQuestion}\n  **Answer:** ${concept.interviewAnswer}`;
+    } else {
+      interviewQuestion = `- ${concept.interviewQuestion}`;
+    }
+  }
 
   return `---
 tags: [commit-notes, ${difficulty}]

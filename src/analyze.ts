@@ -12,6 +12,7 @@ export const ConceptSchema = z
     explanation: z.string().optional(),
     difficulty: z.enum(["basic", "intermediate", "advanced"]).optional(),
     interviewQuestion: z.string().optional(),
+    interviewAnswer: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.existing) {
