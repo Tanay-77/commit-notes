@@ -126,15 +126,19 @@ program
 
 program
   .command("quiz")
-  .description("Start an interactive review / quiz session from generated notes")
+  .description("Generate an interactive Obsidian quiz (or review in terminal with --cli)")
   .option("-m, --model <model>", "Override LLM model name")
-  .action(async (cmdOptions: { model?: string }) => {
+  .option("--cli", "Run interactive quiz directly in the terminal")
+  .action(async (cmdOptions: { model?: string; cli?: boolean }) => {
     try {
       const config = await loadConfig();
       if (cmdOptions.model) {
         config.model = cmdOptions.model;
       }
-      await runQuizSession(process.cwd(), { config });
+      await runQuizSession(process.cwd(), {
+        config,
+        mode: cmdOptions.cli ? "cli" : "obsidian",
+      });
     } catch (err: unknown) {
       console.error("\nQuiz session failed:", err instanceof Error ? err.message : err);
       process.exitCode = 1;

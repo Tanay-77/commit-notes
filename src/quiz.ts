@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { execFile } from "node:child_process";
 import { z } from "zod";
 import { loadConfig, type Config } from "./config.js";
 import { createLLMProvider, type LLMProvider } from "./llm.js";
@@ -35,6 +36,55 @@ export interface ConceptDetails {
   name: string;
   explanation: string;
   question: string;
+  exampleRef?: string;
+}
+
+export interface QuizQuestionItem {
+  concept: string;
+  question: string;
+  idealAnswer: string;
+  conceptSlug: string;
+  explanation?: string;
+  exampleRef?: string;
+}
+
+export function formatObsidianQuizMarkdown(
+  dateStr: string,
+  items: QuizQuestionItem[]
+): string {
+  const sections = items
+    .map((item, index) => {
+      const refLine = item.exampleRef
+        ? `\n> **Related Commit:** [[${item.exampleRef}]]`
+        : "";
+      return `### ${index + 1}. [[${item.conceptSlug}|${item.concept}]]
+
+**Interview Question:**
+${item.question}
+
+> [!tip]- 💡 Click to Reveal Answer & Code Reference
+> **Model Answer:**
+> ${item.idealAnswer}
+>
+> **Reference Concept Note:** [[${item.conceptSlug}]]${refLine}
+`;
+    })
+    .join("\n---\n\n");
+
+  return `---
+date: ${dateStr}
+type: commit-notes-quiz
+totalQuestions: ${items.length}
+tags: [commit-notes, quiz]
+---
+# 🧠 Daily Review Quiz — ${dateStr}
+
+*Review the questions below. Try to answer each question mentally or on paper, then click the callout box to check your understanding.*
+
+---
+
+${sections}
+`;
 }
 
 export async function parseConceptFile(filePath: string): Promise<ConceptDetails> {
@@ -65,7 +115,14 @@ export async function parseConceptFile(filePath: string): Promise<ConceptDetails
     }
   }
 
-  return { name, explanation, question };
+  // Extract Example Commit Reference if present
+  let exampleRef: string | undefined;
+  const exMatch = content.match(/\[\[(\d{4}-\d{2}-\d{2}-[a-f0-9]+)\]\]/);
+  if (exMatch && exMatch[1]) {
+    exampleRef = exMatch[1];
+  }
+
+  return { name, explanation, question, exampleRef };
 }
 
 export async function loadProgressCards(vaultPath: string): Promise<ProgressCard[]> {
@@ -77,7 +134,6 @@ export async function loadProgressCards(vaultPath: string): Promise<ProgressCard
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       list = parsed.map((item) => {
-        // Upgrade legacy progress records if missing SM-2 fields
         if (typeof item.interval !== "number" || typeof item.easeFactor !== "number") {
           const init = createInitialSchedule();
           return {
@@ -168,6 +224,8 @@ export interface QuizSessionOptions {
   config?: Config;
   provider?: LLMProvider;
   readAnswer?: (prompt: string) => Promise<string>;
+  mode?: "obsidian" | "cli";
+  openFile?: boolean;
 }
 
 export async function runQuizSession(
@@ -201,7 +259,81 @@ export async function runQuizSession(
 
   // Pick up to 10 concepts due today
   const sessionQueue = dueCards.slice(0, 10);
-  console.log(`\n=== Review Session: ${sessionQueue.length} concept(s) due today ===\n`);
+  const mode = options.mode ?? "obsidian";
+
+  // === Option 1: Generate Interactive Quiz in Obsidian (Default) ===
+  if (mode === "obsidian") {
+    console.log(`\nGenerating interactive Obsidian quiz for ${sessionQueue.length} concept(s) due today...`);
+
+    const questions: QuizQuestionItem[] = [];
+
+    for (const card of sessionQueue) {
+      const slug = slugify(card.concept);
+      const conceptFilePath = path.join(config.vaultPath, "concepts", `${slug}.md`);
+
+      let details: ConceptDetails = {
+        name: card.concept,
+        explanation: "",
+        question: `Explain the core concepts and trade-offs of ${card.concept}.`,
+      };
+
+      try {
+        details = await parseConceptFile(conceptFilePath);
+      } catch {
+        // Fallback
+      }
+
+      // Generate a model answer
+      const idealAnswer = details.explanation || `Core concept introduced in code changes for ${card.concept}.`;
+
+      questions.push({
+        concept: details.name,
+        question: details.question,
+        idealAnswer,
+        conceptSlug: slug,
+        explanation: details.explanation,
+        exampleRef: details.exampleRef,
+      });
+
+      // Advance schedule by 1 day so user isn't prompted for the exact same batch repeatedly today
+      const updated = calculateSM2(card, 4);
+      card.interval = updated.interval;
+      card.easeFactor = updated.easeFactor;
+      card.repetitions = updated.repetitions;
+      card.dueDate = updated.dueDate;
+    }
+
+    const quizzesDir = path.join(config.vaultPath, "quizzes");
+    await fs.mkdir(quizzesDir, { recursive: true });
+
+    const quizFileName = `quiz-${todayStr}.md`;
+    const quizFilePath = path.join(quizzesDir, quizFileName);
+    const quizMarkdown = formatObsidianQuizMarkdown(todayStr, questions);
+
+    await fs.writeFile(quizFilePath, quizMarkdown, "utf-8");
+    await saveProgressCards(config.vaultPath, cards);
+    await trackUsage(config.vaultPath, "quiz");
+
+    console.log(`\n======================================================`);
+    console.log(`🎉 Interactive Quiz Created in Obsidian!`);
+    console.log(`======================================================`);
+    console.log(`File: "${quizFilePath}"`);
+    console.log(`Total questions: ${questions.length}`);
+    console.log(`\nHow to use in Obsidian:`);
+    console.log(`1. Open Obsidian -> click "quizzes/${quizFileName}"`);
+    console.log(`2. Read each interview question.`);
+    console.log(`3. Click "> [!tip]- 💡 Click to Reveal Answer" to check your understanding!\n`);
+
+    // Optionally auto-open the quiz note on Windows
+    if (options.openFile !== false && process.platform === "win32") {
+      execFile("cmd", ["/c", "start", "", quizFilePath], { windowsHide: true }, () => {});
+    }
+
+    return;
+  }
+
+  // === Option 2: CLI Terminal Review Session (if --cli is passed) ===
+  console.log(`\n=== Terminal Quiz Session: ${sessionQueue.length} concept(s) due today ===\n`);
 
   const provider = options.provider ?? createLLMProvider(config.provider, config.model);
   const readAnswerFn =
@@ -231,7 +363,7 @@ export async function runQuizSession(
     try {
       details = await parseConceptFile(conceptFilePath);
     } catch {
-      // Use fallback details
+      // Fallback
     }
 
     console.log(`[Card ${i + 1}/${sessionQueue.length}] Concept: ${details.name}`);

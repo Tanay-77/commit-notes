@@ -188,6 +188,7 @@ describe("runQuizSession integration", () => {
         fuzzyThreshold: 0.75,
       },
       provider: fakeLLM,
+      mode: "cli",
       readAnswer: async () => "It cleans up timers and listeners to prevent memory leaks.",
     });
 
@@ -205,6 +206,50 @@ describe("runQuizSession integration", () => {
     const usageRaw = await fs.readFile(path.join(tempVault, "usage.json"), "utf-8");
     const usage = JSON.parse(usageRaw);
     expect(usage[0].command).toBe("quiz");
+  });
+
+  it("generates interactive Obsidian quiz note with reveal callouts in default mode", async () => {
+    const conceptPath = path.join(tempVault, "concepts", "sm-2-algorithm.md");
+    await fs.writeFile(
+      conceptPath,
+      "# SM-2 Algorithm\n\n## Explanation\nExpands review intervals.\n\n## Interview questions\n- How does SM-2 work?\n",
+      "utf-8"
+    );
+
+    const today = formatDate();
+    await saveProgressCards(tempVault, [
+      {
+        concept: "SM-2 Algorithm",
+        interval: 0,
+        easeFactor: 2.5,
+        repetitions: 0,
+        dueDate: today,
+      },
+    ]);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runQuizSession(tempVault, {
+      config: {
+        vaultPath: tempVault,
+        provider: "gemini",
+        model: "gemini-1.5-pro",
+        ignore: [],
+        maxDiffChars: 24000,
+        fuzzyThreshold: 0.75,
+      },
+      openFile: false,
+    });
+
+    consoleSpy.mockRestore();
+
+    const quizFile = path.join(tempVault, "quizzes", `quiz-${today}.md`);
+    const content = await fs.readFile(quizFile, "utf-8");
+
+    expect(content).toContain("# 🧠 Daily Review Quiz");
+    expect(content).toContain("How does SM-2 work?");
+    expect(content).toContain("> [!tip]- 💡 Click to Reveal Answer");
+    expect(content).toContain("Expands review intervals.");
   });
 
   it("notifies when no concepts are due today and displays next scheduled review", async () => {
